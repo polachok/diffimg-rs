@@ -74,13 +74,24 @@ fn validate_image_compatibility(
 
 /// Return a difference ratio between 0 and 1 for the two images
 pub fn calculate_diff_ratio(image1: DynamicImage, image2: DynamicImage) -> f64 {
+    use std::arch::x86_64::*;
     // All color types wrap an 8-bit value for each channel
     let max_val = u64::pow(2, 8) - 1;
     let mut diffsum: u64 = 0;
-    for (&p1, &p2) in image1.raw_pixels().iter().zip(image2.raw_pixels().iter()) {
-        diffsum += u64::from(abs_diff(p1, p2));
+    let image1 = image1.raw_pixels();
+    let image2 = image2.raw_pixels();
+    let len = image1.len().min(image2.len());
+
+    for i in (0..len).step_by(32) {
+        let a = &image1[i..i+32];
+        let b = &image2[i..i+32];
+        let a = unsafe { _mm256_loadu_si256(a.as_ptr() as *const _) };
+        let b = unsafe { _mm256_loadu_si256(b.as_ptr() as *const _) };
+        let result = unsafe { _mm256_sad_epu8(a, b) };
+        let (a, b, c, d): (u64, u64, u64, u64) = unsafe { std::mem::transmute(result) };
+        diffsum += a + b + c + d;
     }
-    let total_possible = max_val * image1.raw_pixels().len() as u64;
+    let total_possible = max_val * image1.len() as u64;
     let ratio = diffsum as f64 / total_possible as f64;
 
     ratio
